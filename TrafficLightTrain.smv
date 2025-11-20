@@ -1,12 +1,31 @@
 MODULE main
 VAR
-  light   : RoadLight(train.train, barrier.barrier);
-  train   : TrainSignal(light.road_light, barrier.barrier);
-  barrier : Barrier(light.light_counter, train.train);
+  trigger_reset : boolean;
+  trigger_danger : boolean;
+
+  emergency : emergency(trigger_reset, trigger_danger);
+
+  light   : RoadLight(train.train, barrier.barrier, emergency.em_state);
+  train   : TrainSignal(light.road_light, barrier.barrier, emergency.em_state);
+  barrier : Barrier(light.light_counter, train.train, emergency.em_state);
+
+----------------------------------------------------------------------------------------------------
+-- Keep the triggers for emergency FALSE initially unless selected at a later state (nondeterministically?????)
+----------------------------------------------------------------------------------------------------
+
+ASSIGN
+  init(trigger_reset) := FALSE;
+  --next(trigger_reset) := trigger_reset;  -- stays the same unless you model a toggle -- ended up not working (fully removed the emergency states from being seen in any simulation steps)
+  next(trigger_reset) := {FALSE, TRUE}; -- non deterministic -> has all the combinatin of the 2 emergency states
+
+  init(trigger_danger) := FALSE;
+  --next(trigger_danger) := trigger_danger;  -- stays the same -- ended up not working
+  next(trigger_danger) := {FALSE, TRUE};
+
 
 ------------------------------------------------------------
 
-MODULE TrainSignal(light_state, barrier_state)
+MODULE TrainSignal(light_state, barrier_state, em_state)
 VAR
   train        : {absent, approaching, passing};
   pass_counter : 0..12;
@@ -17,6 +36,10 @@ ASSIGN
 
   next(train) :=
     case
+
+      em_state = reset_mode : absent;
+      em_state = danger_mode : passing;  -- train is present in danger mode
+
       --------------------------------------------------
       -- Train only appears when barrier is UP
       --------------------------------------------------
@@ -40,6 +63,7 @@ ASSIGN
 
   next(pass_counter) :=
     case
+      em_state = danger_mode : 0;
       train = passing & pass_counter < 12 : pass_counter + 1;
       train = absent : 0;
       TRUE : pass_counter;
@@ -47,7 +71,7 @@ ASSIGN
 
 ------------------------------------------------------------
 
-MODULE RoadLight(train_state, barrier_state)
+MODULE RoadLight(train_state, barrier_state, em_state)
 VAR
   road_light   : {green, yellow, red};
   light_counter: 0..7;
@@ -61,6 +85,7 @@ ASSIGN
   ----------------------------------------------------------
   next(light_counter) :=
     case
+      em_state = reset_mode | em_state = danger_mode : 0;
       road_light = yellow | road_light = red :
          (light_counter < 7 ? light_counter + 1 : light_counter);
       TRUE : 0;
@@ -71,6 +96,11 @@ ASSIGN
   ----------------------------------------------------------
   next(road_light) :=
     case
+
+      em_state = reset_mode : green;
+      em_state = danger_mode : red;  
+
+
       --------------------------------------------------------
       -- When train appears → YELLOW → RED
       --------------------------------------------------------
@@ -97,7 +127,7 @@ ASSIGN
 
 ------------------------------------------------------------
 
-MODULE Barrier(light_counter, train_state)
+MODULE Barrier(light_counter, train_state, em_state)
 VAR
   barrier        : {up, lowering, down, raising};
   barrier_counter: 0..10;
@@ -108,6 +138,10 @@ ASSIGN
 
   next(barrier) :=
     case
+
+      em_state = reset_mode : up;
+      em_state = danger_mode : down;  
+
       --------------------------------------------------------
       -- Start lowering only when light has turned RED
       --------------------------------------------------------
@@ -143,7 +177,22 @@ ASSIGN
 
 
 
+MODULE emergency(trigger_reset, trigger_danger)
+    VAR
+        em_state : {none, reset_mode, danger_mode};
 
+    ASSIGN
+        init(em_state) := none;
+
+        next(em_state) :=
+            case
+                -- Emergency activated at any time
+                trigger_reset : reset_mode;
+                trigger_danger : danger_mode;
+
+                -- If not triggering, stay in same mode
+                TRUE : em_state;
+            esac;
 
 
 
