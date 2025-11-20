@@ -1,0 +1,105 @@
+MODULE main
+VAR
+--  asynchronous --
+  train : TrainSignal(light.road_light, barrier.barrier); 
+  light : RoadLight(train.train);
+  barrier : Barrier(train.train);
+
+
+
+MODULE TrainSignal(light_state, barrier_state)
+VAR
+  train : {absent, approaching, passing};
+  pass_counter : 0..12;
+
+ASSIGN
+  init(train) := absent;
+  next(train) :=
+  case
+    train = absent :
+       {absent, approaching};
+
+    train = approaching & light_state = red & barrier_state = down : passing;
+
+    train = passing : absent;
+
+    TRUE: train;
+  esac;
+  next(pass_counter) :=
+  case
+    -- Increment while the train is passing
+    train = passing & pass_counter < 12 :
+        pass_counter + 1;
+
+    -- Reset when the train becomes absent
+    train = absent :
+        0;
+
+    -- Otherwise keep the same value
+    TRUE :
+        pass_counter;
+  esac;
+
+
+
+
+MODULE RoadLight(train)
+VAR
+  road_light : {green, yellow, red};
+  light_counter : 0..5; -- time for yellow/red transition
+ASSIGN
+  init(road_light) := green;
+  next(road_light) :=
+  case
+    train = approaching & road_light = green : yellow;
+    train = approaching & road_light = yellow : red;
+    train = passing : red;
+    train = absent : green;
+    TRUE: road_light;
+  esac;
+  next(light_counter) :=
+  case
+    train = approaching & road_light = green : light_counter + 1;
+    road_light = yellow & light_counter < 5 : light_counter + 1;
+    road_light = red & light_counter = 5 : 0;
+    TRUE: 0;
+  esac;
+
+
+
+
+MODULE Barrier(train)
+VAR
+  barrier : {up, lowering, down, raising};
+  counter : 0..10;
+ASSIGN
+  init(barrier) := up;
+  init(counter) := 0;
+
+  next(counter) :=
+    case
+      train = approaching & barrier = up & counter < 3 : counter + 1;
+      train = approaching & barrier = up & counter = 3 : 0;
+      train = passing | train = absent : 0;
+      TRUE : counter;
+    esac;
+
+  next(barrier) :=
+    case
+      train = approaching & counter = 3 & barrier = up : lowering;
+      barrier = lowering : down;
+      train = absent & barrier = down : raising;
+      barrier = raising : up;
+      TRUE : barrier;
+    esac;
+
+-- The light is red for 5 seconds(immediately when train is approachine) before that 2 second for yellow 
+-- then the barrier lowers for 10 seconds, 
+-- We can stay in the train passing state by looping back to it
+-- 10 seconds to go up while the light still being yellow
+-- Then fully up -> green
+-- safety check and fairness checks (why are we checking this?) specification (writing them)
+-- run with LTL & CTL show all satisfy (verification) (show that they are working)
+-- emergency (variable non-deterministically set to off??)
+
+
