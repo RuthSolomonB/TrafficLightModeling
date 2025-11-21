@@ -1,12 +1,45 @@
+---------------------------------------------------------------- 	     ----------------------------------------------------------------
+---------------------------------------------------------------- MAIN MODULE ----------------------------------------------------------------
+----------------------------------------------------------------	     ----------------------------------------------------------------
+
 MODULE main
 VAR
-  light   : RoadLight(train.train, barrier.barrier);
-  train   : TrainSignal(light.road_light, barrier.barrier);
-  barrier : Barrier(light.light_counter, train.train);
+  emergency_trigger : boolean;  -- single emergency trigger
+  reset_trigger     : boolean;  -- new module trigger
 
-------------------------------------------------------------
+  emergency : emergency(emergency_trigger);
+  reset      : Reset(reset_trigger_effective); -- Use the effective trigger here
 
-MODULE TrainSignal(light_state, barrier_state)
+  -- All subsequent modules use both the raw em_state and the effective reset_state and communicate with one another
+  light   : RoadLight(train.train, barrier.barrier, emergency.em_state, reset.reset_state);
+  train   : TrainSignal(light.road_light, barrier.barrier, emergency.em_state, reset.reset_state);
+  barrier : Barrier(light.light_counter, train.train, emergency.em_state, reset.reset_state);
+
+
+DEFINE
+  -- Define the EFFECTIVE reset trigger: 
+  -- It is TRUE only if the base 'reset_trigger' input is TRUE AND emergency is FALSE.
+  -- so that in the case there is an emergency and someone tries to reset the system: it defaults to emergency and not reset
+  reset_trigger_effective := reset_trigger & !emergency_trigger;
+
+
+ASSIGN
+  -- Non-deterministic assignments for init() and next()
+  -- The variables can be TRUE or FALSE freely in any state/next state
+  -- The constraint below will enforce the mutual exclusion logic.
+
+  init(emergency_trigger) := FALSE;
+  next(emergency_trigger) := {FALSE, TRUE};
+
+  init(reset_trigger) := FALSE;
+  next(reset_trigger) := {FALSE, TRUE};
+
+
+---------------------------------------------------------------- 	      ----------------------------------------------------------------
+---------------------------------------------------------------- TRAIN SIGNAL ----------------------------------------------------------------
+----------------------------------------------------------------	      ----------------------------------------------------------------
+
+MODULE TrainSignal(light_state, barrier_state, em_state, reset_state)
 VAR
   train        : {absent, approaching, passing};
   pass_counter : 0..12;
@@ -17,37 +50,30 @@ ASSIGN
 
   next(train) :=
     case
-      --------------------------------------------------
-      -- Train only appears when barrier is UP
-      --------------------------------------------------
-      train = absent & barrier_state = up :
-         {absent, approaching};
+      reset_state = on : absent; -- refresh/reset to system resets to when train isn't near
+      em_state = on : absent;  -- emergency mode freezes train as absent
 
+      train = absent & barrier_state = up : {absent, approaching};
       train = absent & barrier_state != up : absent;
-
-      --------------------------------------------------
-      -- Train goes from approaching -> passing
-      --------------------------------------------------
       train = approaching & barrier_state = down : passing;
-
-      --------------------------------------------------
-      -- Passing ends after full counter
-      --------------------------------------------------
       train = passing & pass_counter = 12 : absent;
-
       TRUE : train;
     esac;
 
   next(pass_counter) :=
     case
+      em_state = on : 0;  -- freeze counter
       train = passing & pass_counter < 12 : pass_counter + 1;
       train = absent : 0;
       TRUE : pass_counter;
     esac;
 
-------------------------------------------------------------
 
-MODULE RoadLight(train_state, barrier_state)
+---------------------------------------------------------------- 	    ----------------------------------------------------------------
+---------------------------------------------------------------- ROAD LIGHT ----------------------------------------------------------------
+----------------------------------------------------------------	    ----------------------------------------------------------------
+
+MODULE RoadLight(train_state, barrier_state, em_state, reset_state)
 VAR
   road_light   : {green, yellow, red};
   light_counter: 0..7;
@@ -56,48 +82,32 @@ ASSIGN
   init(road_light) := green;
   init(light_counter) := 0;
 
-  ----------------------------------------------------------
-  -- Light counter runs ONLY during yellow/red
-  ----------------------------------------------------------
   next(light_counter) :=
     case
+      em_state = on : 0;  -- freeze counter
       road_light = yellow | road_light = red :
          (light_counter < 7 ? light_counter + 1 : light_counter);
       TRUE : 0;
     esac;
 
-  ----------------------------------------------------------
-  -- Light behavior
-  ----------------------------------------------------------
   next(road_light) :=
     case
-      --------------------------------------------------------
-      -- When train appears → YELLOW → RED
-      --------------------------------------------------------
-      train_state = approaching :
-        (light_counter < 2 ? yellow : red);
+      reset_state = on : green; -- refresh system sets light to green
+      em_state = on : red;  -- emergency mode fixes light to red
 
-      --------------------------------------------------------
-      -- Train is passing → RED
-      --------------------------------------------------------
+      train_state = approaching : (light_counter < 2 ? yellow : red);
       train_state = passing : red;
-
-      --------------------------------------------------------
-      -- Train gone BUT barrier still raising → KEEP RED
-      --------------------------------------------------------
       barrier_state = raising : red;
-
-      --------------------------------------------------------
-      -- Barrier fully UP → GREEN
-      --------------------------------------------------------
       barrier_state = up : green;
-
       TRUE : road_light;
     esac;
 
-------------------------------------------------------------
 
-MODULE Barrier(light_counter, train_state)
+---------------------------------------------------------------- 	   ----------------------------------------------------------------
+----------------------------------------------------------------  BARRIER  ----------------------------------------------------------------
+----------------------------------------------------------------	   ----------------------------------------------------------------
+
+MODULE Barrier(light_counter, train_state, em_state, reset_state)
 VAR
   barrier        : {up, lowering, down, raising};
   barrier_counter: 0..10;
@@ -108,44 +118,84 @@ ASSIGN
 
   next(barrier) :=
     case
-      --------------------------------------------------------
-      -- Start lowering only when light has turned RED
-      --------------------------------------------------------
+      reset_state = on : up; -- refresh to system sets the barrier to be up
+      em_state = on : down;  -- emergency mode fixes barrier down
+
       barrier = up & light_counter = 7 : lowering;
-
-      --------------------------------------------------------
-      -- Finish lowering after 10 ticks
-      --------------------------------------------------------
       barrier = lowering & barrier_counter = 10 : down;
-
-      --------------------------------------------------------
-      -- Train gone → raise barrier
-      --------------------------------------------------------
       barrier = down & train_state = absent : raising;
-
-      --------------------------------------------------------
-      -- Finish raising after 10 ticks → goes to UP
-      --------------------------------------------------------
       barrier = raising & barrier_counter = 10 : up;
-
       TRUE : barrier;
     esac;
 
   next(barrier_counter) :=
     case
+      em_state = on : 0;  -- freeze counter
       (barrier = lowering | barrier = raising) & barrier_counter < 10 :
          barrier_counter + 1;
-
       barrier = up | barrier = down : 0;
-
       TRUE : barrier_counter;
+    esac;
+
+---------------------------------------------------------------- 	    ----------------------------------------------------------------
+---------------------------------------------------------------- EMERGENCY  ----------------------------------------------------------------
+----------------------------------------------------------------	    ----------------------------------------------------------------
+
+MODULE emergency(emergency_trigger)
+VAR
+    em_state : {off, on};
+
+ASSIGN
+    init(em_state) := off;
+
+    next(em_state) :=
+        case
+            emergency_trigger : on;
+            TRUE : em_state;  -- stays in emergency once triggered
+        esac;
+
+
+----------------------------------------------------------------       ----------------------------------------------------------------
+---------------------------------------------------------------- RESET ----------------------------------------------------------------
+----------------------------------------------------------------       ----------------------------------------------------------------
+MODULE Reset(reset_trigger)
+VAR
+  reset_state : {off, on};  -- off = normal, on = reset
+
+ASSIGN
+  init(reset_state) := off;
+
+  next(reset_state) :=
+    case
+      reset_trigger : on;   -- when trigger is true, go to reset
+      TRUE          : off;
     esac;
 
 
 
+--SPEC_VARS
+--  emergency.em_state,
+--  reset.reset_state,
+--  light.road_light,
+--  light.light_counter,
+--  barrier.barrier,
+--  barrier.barrier_counter,
+--  train.train,
+--  train.pass_counter,
+--  emergency_trigger,
+--  reset_trigger_effective;
 
 
+  --light.road_light = green
+  --light.light_counter = 0
+  --train.train = absent
+  --train.pass_counter = 0
+  --barrier.barrier = up
+  --barrier.barrier_counter = 0
 
+---------------------------------------------------------------- 	      	      ----------------------------------------------------------------
+---------------------------------------------------------------- SPECIFICATION CHECKS ----------------------------------------------------------------
+----------------------------------------------------------------	      	      ----------------------------------------------------------------
 
 
 
@@ -157,5 +207,3 @@ ASSIGN
 -- safety check and fairness checks (why are we checking this?) specification (writing them)
 -- run with LTL & CTL show all satisfy (verification) (show that they are working)
 -- emergency (variable non-deterministically set to off??)
-
-
