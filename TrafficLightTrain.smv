@@ -1,39 +1,3 @@
----------------------------------------------------------------- 	     ----------------------------------------------------------------
----------------------------------------------------------------- MAIN MODULE ----------------------------------------------------------------
-----------------------------------------------------------------	     ----------------------------------------------------------------
-
-MODULE main
-
-DEFINE
-  -- Define the EFFECTIVE reset trigger: 
-  -- It is TRUE only if the base 'reset_trigger' input is TRUE AND emergency is FALSE.
-  -- so that in the case there is an emergency and someone tries to reset the system: it defaults to emergency and not reset
-  reset_trigger_effective := reset_trigger & !emergency_trigger;
-
-VAR
-  emergency_trigger : boolean;  -- single emergency trigger
-  reset_trigger     : boolean;  -- new module trigger
-
-  emergency : emergency(emergency_trigger);
-  reset      : Reset(reset_trigger_effective); -- Use the effective trigger here
-
-  -- All subsequent modules use both the raw em_state and the effective reset_state and communicate with one another
-  light   : RoadLight(train.train, barrier.barrier, emergency.em_state, reset.reset_state);
-  train   : TrainSignal(light.road_light, barrier.barrier, emergency.em_state, reset.reset_state);
-  barrier : Barrier(light.light_counter, train.train, emergency.em_state, reset.reset_state);
-
-ASSIGN
-  -- Non-deterministic assignments for init() and next()
-  -- The variables can be TRUE or FALSE freely in any state/next state
-  -- The constraint below will enforce the mutual exclusion logic.
-
-  init(emergency_trigger) := FALSE;
-  next(emergency_trigger) := {FALSE, TRUE};
-
-  init(reset_trigger) := FALSE;
-  next(reset_trigger) := {FALSE, TRUE};
-
-
 ---------------------------------------------------------------- 	      ----------------------------------------------------------------
 ---------------------------------------------------------------- TRAIN SIGNAL ----------------------------------------------------------------
 ----------------------------------------------------------------	      ----------------------------------------------------------------
@@ -170,7 +134,39 @@ ASSIGN
       TRUE          : off;
     esac;
 
+---------------------------------------------------------------- 	     ----------------------------------------------------------------
+---------------------------------------------------------------- MAIN MODULE ----------------------------------------------------------------
+----------------------------------------------------------------	     ----------------------------------------------------------------
+MODULE main
 
+DEFINE
+  -- Define the EFFECTIVE reset trigger: 
+  -- It is TRUE only if the base 'reset_trigger' input is TRUE AND emergency is FALSE.
+  -- so that in the case there is an emergency and someone tries to reset the system: it defaults to emergency and not reset
+  reset_trigger_effective := reset_trigger & !emergency_trigger;
+
+VAR
+  emergency_trigger : boolean;  -- single emergency trigger
+  reset_trigger     : boolean;  -- new module trigger
+
+  emergency : process emergency(emergency_trigger);
+  reset     : process Reset(reset_trigger_effective); -- Use the effective trigger here
+
+  -- All subsequent modules use both the raw em_state and the effective reset_state and communicate with one another
+  light   : process RoadLight(train.train, barrier.barrier, emergency.em_state, reset.reset_state);
+  train   : process TrainSignal(light.road_light, barrier.barrier, emergency.em_state, reset.reset_state);
+  barrier : process Barrier(light.light_counter, train.train, emergency.em_state, reset.reset_state);
+
+ASSIGN
+  -- Non-deterministic assignments for init() and next()
+  -- The variables can be TRUE or FALSE freely in any state/next state
+  -- The constraint below will enforce the mutual exclusion logic.
+
+  init(emergency_trigger) := FALSE;
+  next(emergency_trigger) := {FALSE, TRUE};
+
+  init(reset_trigger) := FALSE;
+  next(reset_trigger) := {FALSE, TRUE};
 
 --SPEC_VARS
 --  emergency.em_state,
@@ -196,8 +192,42 @@ ASSIGN
 ---------------------------------------------------------------- SPECIFICATION CHECKS ----------------------------------------------------------------
 ----------------------------------------------------------------	      	      ----------------------------------------------------------------
 
+------------------------ SAFETY REQUIREMENTS ------------------------
+ 
+-- Train may only be passing when barrier is down (CO-1, FR-3)
+SPEC AG (train.train = passing -> barrier.barrier = down) -- true sync, false async
 
--- The light is red for 5 seconds(immediately when train is approachine) before that 2 second for yellow 
+-- Light must be red whenever barrier is not fully up (CO-2)
+SPEC AG (barrier.barrier != up -> light.road_light = red) -- false sync, false async
+
+-- Barrier must not start going up until train has completely passed (CO-3, FR-7)
+SPEC AG (barrier.barrier = raising -> train.train = absent) -- true sync, true async
+
+----------------------- DEADLOCK-FREE OPERATION ---------------------
+
+
+
+----------------------- PROGRESS REQUIREMENTS -----------------------
+
+-- Barrier must eventually go down if the train is approaching
+SPEC AG (train.train = approaching -> AF (barrier.barrier = down)) -- false sync, false async
+
+-- Barrier must eventually go up once the train has passed
+SPEC AG (train.train = absent -> AF (barrier.barrier = up)) -- false sync, false async
+
+-- Road light should eventually turn green again when it is safe
+SPEC AG ((train.train = absent & barrier.barrier = up & emergency.em_state = off) -> AF (light.road_light = green)) -- true sync, false async
+
+---------------------- ADDITIONAL SPECIFICATIONS --------------------
+
+-- Whenever train is passing, light must be red 
+SPEC AG (train.train = passing -> light.road_light = red) -- true sync, false async
+
+---------------------------------------------------------------------
+
+
+-- The light is red for 5 seconds(immediately when train is approaching) before that 2 second for yellow 
+
 -- then the barrier lowers for 10 seconds, 
 -- We can stay in the train passing state by looping back to it
 -- 10 seconds to go up while the light still being red
