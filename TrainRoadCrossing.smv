@@ -167,30 +167,6 @@ SPEC AG EX TRUE -- true
 
 
 
-
-
-
-
---SPEC_VARS
---  emergency.em_state,
---  reset.reset_state,
---  light.light,
---  light.light_counter,
---  barrier.barrier,
---  barrier.barrier_counter,
---  train.train,
---  train.pass_counter,
---  emergency_trigger,
---  reset_trigger_effective;
-
-
-  --light.light = green
-  --light.light_counter = 0
-  --train.train = absent
-  --train.pass_counter = 0
-  --barrier.barrier = up
-  --barrier.barrier_counter = 0
-
 ---------------------------------------------------------------- 	      	      ----------------------------------------------------------------
 ---------------------------------------------------------------- SPECIFICATION CHECKS ----------------------------------------------------------------
 ----------------------------------------------------------------	      	      ----------------------------------------------------------------

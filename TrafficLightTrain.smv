@@ -3,6 +3,13 @@
 ----------------------------------------------------------------	     ----------------------------------------------------------------
 
 MODULE main
+
+DEFINE
+  -- Define the EFFECTIVE reset trigger: 
+  -- It is TRUE only if the base 'reset_trigger' input is TRUE AND emergency is FALSE.
+  -- so that in the case there is an emergency and someone tries to reset the system: it defaults to emergency and not reset
+  reset_trigger_effective := reset_trigger & !emergency_trigger;
+
 VAR
   emergency_trigger : boolean;  -- single emergency trigger
   reset_trigger     : boolean;  -- new module trigger
@@ -14,14 +21,6 @@ VAR
   light   : RoadLight(train.train, barrier.barrier, emergency.em_state, reset.reset_state);
   train   : TrainSignal(light.road_light, barrier.barrier, emergency.em_state, reset.reset_state);
   barrier : Barrier(light.light_counter, train.train, emergency.em_state, reset.reset_state);
-
-
-DEFINE
-  -- Define the EFFECTIVE reset trigger: 
-  -- It is TRUE only if the base 'reset_trigger' input is TRUE AND emergency is FALSE.
-  -- so that in the case there is an emergency and someone tries to reset the system: it defaults to emergency and not reset
-  reset_trigger_effective := reset_trigger & !emergency_trigger;
-
 
 ASSIGN
   -- Non-deterministic assignments for init() and next()
@@ -196,7 +195,6 @@ ASSIGN
 ---------------------------------------------------------------- 	      	      ----------------------------------------------------------------
 ---------------------------------------------------------------- SPECIFICATION CHECKS ----------------------------------------------------------------
 ----------------------------------------------------------------	      	      ----------------------------------------------------------------
-
 
 
 -- The light is red for 5 seconds(immediately when train is approachine) before that 2 second for yellow 
