@@ -1,6 +1,6 @@
----------------------------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------------------------------
 -- EMERGENCY MODULE
----------------------------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------------------------------
 MODULE Emergency()
 VAR 
     emergency : boolean;
@@ -10,11 +10,13 @@ ASSIGN
 
     next(emergency) := {FALSE, TRUE};
 
+FAIRNESS running -- process must be scheduled infinitely often
+FAIRNESS !emergency -- emergency must be FALSE infinitely often
 
----------------------------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------------------------------
 -- TRAIN MODULE
----------------------------------------------------------------------------------------------
-MODULE TrainSignal(barrier_state, em_state)
+----------------------------------------------------------------------------------------------------------------------------------------------------
+MODULE TrainSignal(barrier_state)
 VAR 
     train : {absent, approaching, passing};
 
@@ -24,14 +26,16 @@ ASSIGN
     next(train) :=
     case
         train = absent & barrier_state = up : {absent, approaching};
-        train = approaching & barrier_state = down : passing;
+        train = approaching & barrier_state = down : {approaching, passing};
         train = passing : {passing, absent};
         TRUE : train;
     esac;
 
----------------------------------------------------------------------------------------------
+FAIRNESS running -- process must be scheduled infinitely often
+
+----------------------------------------------------------------------------------------------------------------------------------------------------
 -- LIGHT MODULE
----------------------------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------------------------------
 MODULE RoadLight(train_state, barrier_state, em_state)
 VAR
     light : {green, yellow, red};
@@ -43,32 +47,34 @@ ASSIGN
 
     next(light) :=
         case
+            em_state : red;
+            train_state = absent & barrier_state = up : green;
             train_state = approaching & light = green : yellow;
             train_state = approaching & light = yellow : red;
             train_state = passing : red;
             barrier_state != up : red;
-            train_state = absent & barrier_state = up & !em_state : green;
-            em_state : red;
             TRUE : light;
         esac;
     
     next(counter) :=
         case
-            em_state : 0; -- freeze counter
-            light = yellow | light = green : 0;
             light = red & barrier_state = up & counter < 5 : counter + 1;
             light = red & barrier_state = down : 0;
             light = red & barrier_state = raising : 0;
+            light = yellow | light = green : 0;
             TRUE : counter;
         esac;
 
----------------------------------------------------------------------------------------------
+FAIRNESS running -- process must be scheduled infinitely often
+
+----------------------------------------------------------------------------------------------------------------------------------------------------
 -- BARRIER MODULE
----------------------------------------------------------------------------------------------
-MODULE Barrier(train_state, light_state, em_state, light_counter)
+----------------------------------------------------------------------------------------------------------------------------------------------------
+MODULE Barrier(train_state, light_state, light_counter, em_state)
 VAR
     barrier : {up, lowering, down, raising};
     counter : 0..10;
+    
 
 ASSIGN
     init(barrier) := up;
@@ -86,7 +92,6 @@ ASSIGN
     
     next(counter) :=
         case 
-            -- em_state = TRUE & (barrier != lowering | barrier != down) : 0;   
             barrier = up : 0;
             barrier = down : 0;
             barrier = lowering & counter < 10 : counter + 1;
@@ -95,30 +100,29 @@ ASSIGN
             TRUE : counter;
         esac;
 
----------------------------------------------------------------------------------------------
+FAIRNESS running -- process must be scheduled infinitely often
+----------------------------------------------------------------------------------------------------------------------------------------------------
 -- MAIN MODULE 
----------------------------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------------------------------
 MODULE main
 VAR
     emergency : process Emergency();
-    train : process TrainSignal(barrier.barrier, emergency.emergency); -- (barrier_state, em_state)
+    train : process TrainSignal(barrier.barrier); -- (barrier_state)
     light : process RoadLight(train.train, barrier.barrier, emergency.emergency); -- (train_state, barrier_state, em_state)
-    barrier : process Barrier(train.train, light.light, emergency.emergency, light.counter); -- (train_state, light_state, em_state, light_counter)
+    barrier : process Barrier(train.train, light.light, light.counter, emergency.emergency); -- (train_state, light_state, light_counter, em_state,)
 
--- Fairness assumption: each controller gets scheduled infinitely often
-FAIRNESS TRUE
+    -- Fairness properties
+    FAIRNESS !emergency.emergency -- emergency must be FALSE infinitely often
+    FAIRNESS (train.train != approaching | barrier.barrier = down) -- train can't be infinitely approaching, barrier must eventually be down
 
----------------------------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------------------------------
 -- SPECIFICATIONS
----------------------------------------------------------------------------------------------
+----------------------------------------------------------------------------------------------------------------------------------------------------
 
--- SAFETY PROPERTIES
- 
+-- SAFETY REQUIREMENTS -----------------------------------------------------------------------------------------------------------------------------
+
 -- Train may only be passing when barrier is down (CO-1, FR-3)
 SPEC AG (train.train = passing -> barrier.barrier = down) -- true
-
--- Whenever train is passing, light must be red 
-SPEC AG (train.train = passing -> light.light = red) -- true
 
 -- Light must be red whenever barrier is not fully up (CO-2)
 SPEC AG (barrier.barrier != up -> light.light = red) -- true
@@ -126,12 +130,7 @@ SPEC AG (barrier.barrier != up -> light.light = red) -- true
 -- Barrier must not start going up until train has completely passed (CO-3, FR-7)
 SPEC AG (barrier.barrier = raising -> train.train = absent) -- true
 
-
--- In emergency, light red and barrier down immediately (FR-6, CO-6)
-SPEC AG (emergency.emergency = TRUE -> (AX (light.light = red & (barrier.barrier = lowering | barrier.barrier = down)))) -- false
-
-
--- TIMING PROPERTIES
+-- TIME CONSTRAINTS --------------------------------------------------------------------------------------------------------------------------------
 
 -- Barrier only starts lowering after light has been red for at least 5 seconds (FR-4, CO-5)
 
@@ -139,47 +138,38 @@ SPEC AG ((emergency.emergency = FALSE & light.light = red & light.counter < 5) -
 
 -- Lowering takes at most 10 seconds before barrier is down (FR-5, CO-4)
 
--- When barrier reached down by normal motion (no emergency), it has been lowering for at least 10s
+-- When barrier reached down, it has been lowering for at least 10s
 
 -- Raising takes at most 10 seconds before barrier is up (FR-5, CO-4)
 
 -- When barrier is up after a raise, it has been raising for at least 10s
 
--- DEADLOCK CHECK
+-- EMERGENCY SCENARIOS -----------------------------------------------------------------------------------------------------------------------------
+
+-- In emergency, light red and barrier down immediately (FR-6, CO-6)
+-- SPEC AG (emergency.emergency = TRUE -> (AX (light.light = red & (barrier.barrier = lowering | barrier.barrier = down)))) -- false
+
+
+-- DEADLOCK-FREE OPERATION -------------------------------------------------------------------------------------------------------------------------
 
 -- There is always at least one enabled transition
 SPEC AG EX TRUE -- true
 
--- LIVENESS PROPERTIES
+-- PROGRESS REQUIREMENTS ---------------------------------------------------------------------------------------------------------------------------
 
--- -- If train is approaching, barrier eventually goes down (FR-11, progress)
--- LTLSPEC G (train.train = approaching -> F barrier.barrier = down)
+-- Barrier must eventually go down if the train is approaching
+SPEC AG (train.train = approaching -> AF (barrier.barrier = down)) -- true
 
--- -- Once train has passed (absent) and no emergency, barrier eventually goes up (FR-12, CO-8)
--- LTLSPEC G ((train.train = absent & emergency.emergency = FALSE) -> F barrier.barrier = up)
+-- Barrier must eventually go up once the train has passed, unless a new emergency occurs first
+LTLSPEC G ((!emergency.emergency & train.train = absent) -> F (barrier.barrier = up | emergency.emergency)) -- true
 
--- -- When it is safe (train absent, barrier up, no emergency),
--- -- the road light eventually becomes green again (FR-13, CO-8)
--- LTLSPEC G ((train.train = absent & barrier.barrier = up & emergency.emergency = FALSE) -> F light.light = green)
+-- Road light should eventually turn green again when it is safe, unless a new emergency occurs first
+-- SPEC AG ((!emergency.emergency & train.train = absent & barrier.barrier = up) -> AF (light.light = green)) -- false
+LTLSPEC G ((!emergency.emergency & train.train = absent & barrier.barrier = up) -> F (light.light = green | emergency.emergency))
 
--- -- Eventually reach idle safe state after train passes and no emergency
--- LTLSPEC G ((train.train = absent & emergency.emergency = FALSE) -> F (barrier.barrier = up & light.light = green))
-
-
-
----------------------------------------------------------------- 	      	      ----------------------------------------------------------------
----------------------------------------------------------------- SPECIFICATION CHECKS ----------------------------------------------------------------
-----------------------------------------------------------------	      	      ----------------------------------------------------------------
+-- ADDITIONAL SPECIFICATIONS ------------------------------------------------------------------------------------------------------------------------
 
 
 
--- The light is red for 5 seconds(immediately when train is approachine) before that 2 second for yellow 
--- then the barrier lowers for 10 seconds, 
--- We can stay in the train passing state by looping back to it
--- 10 seconds to go up while the light still being red
--- Then fully up (after 10 seconds) -> green
--- safety check and fairness checks (why are we checking this?) specification (writing them)
--- run with LTL & CTL show all satisfy (verification) (show that they are working)
--- emergency (variable non-deterministically set to off??)
 
 
