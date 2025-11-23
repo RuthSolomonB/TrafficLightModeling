@@ -58,6 +58,7 @@ ASSIGN
     
     next(counter) :=
         case
+            em_state : 5;
             light = red & barrier_state = up & counter < 5 : counter + 1;
             light = red & barrier_state = down : 0;
             light = red & barrier_state = raising : 0;
@@ -134,7 +135,7 @@ SPEC AG (barrier.barrier = raising -> train.train = absent) -- true
 
 -- Barrier only starts lowering after light has been red for at least 5 seconds (FR-4, CO-5)
 
-SPEC AG ((emergency.emergency = FALSE & light.light = red & light.counter < 5) -> barrier.barrier != lowering) -- false
+LTLSPEC (G !emergency.emergency) -> G ((light.light = red & light.counter < 5) -> barrier.barrier != lowering) -- true
 
 -- Lowering takes at most 10 seconds before barrier is down (FR-5, CO-4)
 
@@ -147,7 +148,7 @@ SPEC AG ((emergency.emergency = FALSE & light.light = red & light.counter < 5) -
 -- EMERGENCY SCENARIOS -----------------------------------------------------------------------------------------------------------------------------
 
 -- In emergency, light red and barrier down immediately (FR-6, CO-6)
--- SPEC AG (emergency.emergency = TRUE -> (AX (light.light = red & (barrier.barrier = lowering | barrier.barrier = down)))) -- false
+SPEC AG (emergency.emergency = TRUE -> (AX (light.light = red & (barrier.barrier = lowering | barrier.barrier = down)))) -- false
 
 
 -- DEADLOCK-FREE OPERATION -------------------------------------------------------------------------------------------------------------------------
@@ -163,9 +164,8 @@ SPEC AG (train.train = approaching -> AF (barrier.barrier = down)) -- true
 -- Barrier must eventually go up once the train has passed, unless a new emergency occurs first
 LTLSPEC G ((!emergency.emergency & train.train = absent) -> F (barrier.barrier = up | emergency.emergency)) -- true
 
--- Road light should eventually turn green again when it is safe, unless a new emergency occurs first
--- SPEC AG ((!emergency.emergency & train.train = absent & barrier.barrier = up) -> AF (light.light = green)) -- false
-LTLSPEC G ((!emergency.emergency & train.train = absent & barrier.barrier = up) -> F (light.light = green | emergency.emergency))
+-- Road light should eventually turn green again when it is safe and is not interrupted by an emergency
+LTLSPEC G ((!emergency.emergency & train.train = absent & barrier.barrier = up & G (!emergency.emergency & train.train = absent & barrier.barrier = up)) -> F (light.light = green)) -- true
 
 -- ADDITIONAL SPECIFICATIONS ------------------------------------------------------------------------------------------------------------------------
 
