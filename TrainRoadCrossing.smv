@@ -177,5 +177,24 @@ SPEC AG(emergency.emergency -> EF (light.light = green & barrier.barrier = up)) 
 
 -- ADDITIONAL SPECIFICATIONS ------------------------------------------------------------------------------------------------------------------------
 
+-- Barrier lowering automatically implies light is red
+SPEC AG (barrier.barrier = lowering -> light.light = red) -- true <<<<< SHOULD THIS BE SAFETY PROPERTY ????? MUTUAL EXCLUSION & CONSISTENCY REQUIREMENTS
 
+-- Barrier raising should also imply red or yellow
+SPEC AG (barrier.barrier = raising -> (light.light = red | light.light = yellow)) -- true <<<<< SHOULD THIS BE SAFETY ????? MUTUAL EXCLUSION & CONSISTENCY REQUIREMENTS
 
+-- If ht etrain is passing, it must have previously  been approacting (no phantom train)
+LTLSPEC G(train.train = passing -> O train.train = approaching) -- true
+
+-- Train can't jump states
+SPEC AG !(train.train = absent & AX(train.train = passing)) -- true
+SPEC AG !(train.train = passing & AX(train.train = approaching)) -- true
+
+-- Barrier lowering minimum duration
+SPEC AG (barrier.barrier = lowering -> barrier.counter > 10 -> barrier.barrier = down) -- true
+
+-- Barrier must not be lowering forever
+SPEC AG (barrier.barrier = lowering -> AF (barrier.barrier = down)) -- true
+
+-- Barrier must not be raising forever if not interrupted by an emergency
+LTLSPEC (G !emergency.emergency) -> G (barrier.barrier = raising -> F (barrier.barrier = up)) -- true
