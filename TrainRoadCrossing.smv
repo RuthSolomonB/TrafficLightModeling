@@ -134,22 +134,27 @@ SPEC AG (barrier.barrier = raising -> train.train = absent) -- true
 -- TIME CONSTRAINTS --------------------------------------------------------------------------------------------------------------------------------
 
 -- Barrier only starts lowering after light has been red for at least 5 seconds (FR-4, CO-5)
-
 LTLSPEC (G !emergency.emergency) -> G ((light.light = red & light.counter < 5) -> barrier.barrier != lowering) -- true
 
--- Lowering takes at most 10 seconds before barrier is down (FR-5, CO-4)
+-- Lowering takes at most 10 seconds before the barrier is down (FR-5, CO-4)
+LTLSPEC G (barrier.barrier = lowering & barrier.counter = 10 -> F barrier.barrier = down) -- true
+LTLSPEC G (barrier.barrier = lowering -> barrier.counter <= 10) -- true
 
--- When barrier reached down, it has been lowering for at least 10s
+-- When barrier reaches down, it has been lowering for at least 10s
+LTLSPEC G (barrier.barrier = lowering & barrier.counter < 10 -> X barrier.barrier != down) -- true
 
 -- Raising takes at most 10 seconds before barrier is up (FR-5, CO-4)
+LTLSPEC G (barrier.barrier = raising & barrier.counter = 10 -> F barrier.barrier = up) -- true
+LTLSPEC G (barrier.barrier = raising -> barrier.counter <=10) -- true
 
 -- When barrier is up after a raise, it has been raising for at least 10s
+LTLSPEC G (barrier.barrier = raising & barrier.counter < 10 -> X barrier.barrier != up) -- true
 
 -- EMERGENCY SCENARIOS -----------------------------------------------------------------------------------------------------------------------------
 
 -- In emergency, light red and barrier down immediately (FR-6, CO-6)
-SPEC AG (emergency.emergency = TRUE -> (AX (light.light = red & (barrier.barrier = lowering | barrier.barrier = down)))) -- false
-
+SPEC AG (emergency.emergency -> (EF (light.light = red & (barrier.barrier = lowering | barrier.barrier = down)))) -- true 
+SPEC AG (emergency.emergency -> EX (emergency.emergency & light.light = red & EX (emergency.emergency & (barrier.barrier = lowering | barrier.barrier = down)))) -- true
 
 -- DEADLOCK-FREE OPERATION -------------------------------------------------------------------------------------------------------------------------
 
@@ -164,12 +169,13 @@ SPEC AG (train.train = approaching -> AF (barrier.barrier = down)) -- true
 -- Barrier must eventually go up once the train has passed, unless a new emergency occurs first
 LTLSPEC G ((!emergency.emergency & train.train = absent) -> F (barrier.barrier = up | emergency.emergency)) -- true
 
--- Road light should eventually turn green again when it is safe and is not interrupted by an emergency
+-- Road light should eventually turn green again when it is safe, if there is never an emergency
 LTLSPEC G ((!emergency.emergency & train.train = absent & barrier.barrier = up & G (!emergency.emergency & train.train = absent & barrier.barrier = up)) -> F (light.light = green)) -- true
 
+-- Road light should eventually turn green and barrier should eventually go up if after an emergency occurs
+SPEC AG(emergency.emergency -> EF (light.light = green & barrier.barrier = up)) -- true
+
 -- ADDITIONAL SPECIFICATIONS ------------------------------------------------------------------------------------------------------------------------
-
-
 
 
 
